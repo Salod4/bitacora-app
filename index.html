@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bitácora</title>
+<meta name="description" content="Registro de vuelo financiero personal">
+<meta name="theme-color" content="#14213D">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bitácora">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+html,body{margin:0;padding:0;background:#FBF9F4}
+
+  #app{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:#FBF9F4;color:#14213D;min-height:100vh;padding:0;box-sizing:border-box}
+  #app *{box-sizing:border-box}
+  .mono{font-family:ui-monospace,'SFMono-Regular','Roboto Mono',Menlo,Consolas,monospace}
+  .eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#8A8272;font-weight:600}
+  .btn{border:1px solid #14213D;background:#14213D;color:#FBF9F4;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn:hover{background:#233252}
+  .btn-ghost{border:1px solid #D8D1C2;background:transparent;color:#14213D;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn-ghost:hover{background:#F3EFE6}
+  .btn-danger{border:1px solid #B23A2E;background:transparent;color:#B23A2E;padding:6px 10px;border-radius:6px;font-size:12px;cursor:pointer}
+  input,select,textarea{font-family:inherit;border:1px solid #D8D1C2;background:#fff;border-radius:7px;padding:8px 10px;font-size:13px;color:#14213D;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:#0F6E66}
+  label{font-size:11px;color:#8A8272;font-weight:600;display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+  .card{background:#fff;border:1px solid #E9E3D5;border-radius:12px;padding:18px}
+
+</style>
+</head>
+<body>
+<div id="app"><div style="padding:60px 20px;text-align:center;color:#8A8272">Cargando bitácora...</div></div>
+<script>
+(function(){
+  var STORAGE_KEY = 'bitacora-data';
+  var CURRENCIES = ['MXN','AUD','GBP','USD','EUR'];
+  var SYMBOLS = {MXN:'$',AUD:'A$',GBP:'£',USD:'US$',EUR:'€'};
+  var EXPENSE_CATS = ['Comida','Transporte','Renta','Servicios','Salud','Entretenimiento','Compras','Viajes','Otros'];
+  var INCOME_CATS = ['Sueldo/Shifts','Freelance','Kivo / LoopOff','Otro ingreso'];
+  var TAGS = ['#0F6E66','#B8860B','#B23A2E','#3E5C76','#7A5C61','#4A6B3E'];
+
+  var S = null;
+  var activeTab = 'dashboard';
+  var dashMonth = new Date().toISOString().slice(0,7);
+  var importState = null;
+
+  function uid(){ return 'id-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8); }
+
+  function defaultState(){
+    return {
+      baseCurrency: 'MXN',
+      rates: {MXN:1, AUD:12.3, GBP:23.5, USD:18.4, EUR:20.0},
+      accounts: [
+        {id:uid(), name:'Revolut', currency:'GBP', tag:TAGS[0]},
+        {id:uid(), name:'Nu', currency:'MXN', tag:TAGS[1]},
+        {id:uid(), name:'BBVA', currency:'MXN', tag:TAGS[2]},
+        {id:uid(), name:'CommBank', currency:'AUD', tag:TAGS[3]}
+      ],
+      transactions: [],
+      goals: [],
+      pending: [],
+      jobs: [
+        {id:uid(), name:"Betty's", hourlyRate:34.76, currency:'AUD', taxRate:0.16, payLagDays:11, tag:TAGS[1]},
+        {id:uid(), name:'B&W', hourlyRate:40.62, currency:'AUD', taxRate:0.15, payLagDays:14, tag:TAGS[3]}
+      ]
+    };
+  }
+
+  var persistOk = true;
+  var backend = null; // 'claude' | 'local' | null
+
+  function hasStorage(){
+    return typeof window !== 'undefined' && window.storage && typeof window.storage.get === 'function' && typeof window.storage.set === 'function';
+  }
+
+  function detectBackend(){
+    if(hasStorage()) return 'claude';
+    try{
+      if(typeof localStorage !== 'undefined'){
+        localStorage.setItem('__bitacora_test__','1');
+        localStorage.removeItem('__bitacora_test__');
+        return 'local';
+      }
+    }catch(e){}
+    return null;
+  }
+
+  function save(){
+    if(backend==='claude'){
+      try{
+        window.storage.set(STORAGE_KEY, JSON.stringify(S), false).catch(function(e){ console.error('save failed', e); });
+      }catch(e){ console.error('save error', e); }
+    } else if(backend==='local'){
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); }
+      catch(e){ console.error('local save error', e); }
+    }
+  }
+
+  function load(){
+    backend = detectBackend();
+    if(backend==='claude'){
+      try{
+        window.storage.get(STORAGE_KEY, false).then(function(res){
+          S = res && res.value ? JSON.parse(res.value) : defaultState();
+          ensureShape();
+          render();
+        }).catch(function(){
+          S = defaultState();
+          ensureShape();
+          render();
+        });
+      }catch(e){
+        S = defaultState();
+        ensureShape();
+        render();
+      }
+    } else if(backend==='local'){
+      try{
+        var raw = localStorage.getItem(STORAGE_KEY);
+        S = raw ? JSON.parse(raw) : defaultState();
+      }catch(e){ S = defaultState(); }
+      ensureShape();
+      render();
+    } else {
+      persistOk = false;
+      S = defaultState();
+      render();
+    }
+  }
+
+  function ensureShape(){
+    var d = defaultState();
+    if(!S.baseCurrency) S.baseCurrency = d.baseCurrency;
+    if(!S.rates) S.rates = d.rates;
+    if(!S.accounts || !S.accounts.length) S.accounts = d.accounts;
+    if(!S.transactions) S.transactions = [];
+    if(!S.goals) S.goals = [];
+    if(!S.pending) S.pending = [];
+    if(!S.jobs) S.jobs = d.jobs;
+  }
+
+  function jobById(id){ return S.jobs.find(function(j){return j.id===id;}); }
+
+  function convert(amount, from, to){
+    if(from === to) return amount;
+    var mxn = from === 'MXN' ? amount : amount * (S.rates[from]||1);
+    return to === 'MXN' ? mxn : mxn / (S.rates[to]||1);
+  }
+
+  function fmt(amount, currency){
+    try{
+      return new Intl.NumberFormat('es-MX', {style:'currency', currency: currency||'MXN', maximumFractionDigits:0}).format(amount);
+    }catch(e){
+      return (SYMBOLS[currency]||'$') + Math.round(amount).toLocaleString();
+    }
+  }
+
+  function accountById(id){ return S.accounts.find(function(a){return a.id===id;}); }
+  function goalById(id){ return S.goals.find(function(g){return g.id===id;}); }
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  // ---------- render dispatch ----------
+  function render(){
+    var html = '';
+    html += renderHeader();
+    if(activeTab==='dashboard') html += renderDashboard();
+    else if(activeTab==='pendientes') html += renderPendientes();
+    else if(activeTab==='proyeccion') html += renderProyeccion();
+    else if(activeTab==='movimientos') html += renderMovimientos();
+    else if(activeTab==='metas') html += renderMetas();
+    else if(activeTab==='cuentas') html += renderCuentas();
+    document.getElementById('app').innerHTML = html;
+    bindEvents();
+    if(activeTab==='proyeccion') drawBalanceChart();
+  }
+
+  function renderHeader(){
+    var tabs = [['dashboard','Panel'],['pendientes','Pendientes'],['proyeccion','Proyección'],['movimientos','Movimientos'],['metas','Metas'],['cuentas','Cuentas']];
+    var tabHtml = tabs.map(function(t){
+      var active = activeTab===t[0];
+      return '<button data-tab="'+t[0]+'" style="padding:10px 4px;margin-right:22px;background:none;border:none;cursor:pointer;font-size:13px;font-weight:600;color:'+(active?'#14213D':'#A39C8C')+';border-bottom:2px solid '+(active?'#0F6E66':'transparent')+'">'+t[1]+'</button>';
+    }).join('');
+    var banner = persistOk ? '' : '<div style="max-width:900px;margin:14px auto 0;padding:10px 14px;background:#FBECE9;border:1px solid #E8B8AF;border-radius:8px;font-size:12px;color:#8A3226">No se detectó guardado automático en este navegador (revisa que no est&#233;s en modo privado/incógnito) — tus datos se van a perder al recargar.</div>';
+    return ''+banner+
+    '<div style="max-width:900px;margin:0 auto;padding:28px 20px 0">'+
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
+        '<div>'+
+          '<div class="eyebrow">Registro de vuelo financiero</div>'+
+          '<div style="font-size:26px;font-weight:700;letter-spacing:-.01em">Bitácora</div>'+
+        '</div>'+
+        '<div class="mono" style="font-size:12px;color:#8A8272">Moneda base: '+S.baseCurrency+'</div>'+
+      '</div>'+
+      '<div style="display:flex;margin-top:18px;border-bottom:1px solid #E9E3D5">'+tabHtml+'</div>'+
+    '</div>'+
+    '<div style="max-width:900px;margin:0 auto;padding:22px 20px 60px">';
+  }
+
+  // close wrapper div added in header; append at end of each tab render, plus close outer
+  function wrapClose(inner){ return inner + '</div>'; }
+
+  // ---------- DASHBOARD ----------
+  function monthTx(){
+    return S.transactions.filter(function(t){ return t.date.slice(0,7)===dashMonth; });
+  }
+
+  function renderDashboard(){
+    var tx = monthTx();
+    var income=0, expense=0, saving=0;
+    tx.forEach(function(t){
+      var v = convert(t.amount, t.currency, S.baseCurrency);
+      if(t.type==='income') income+=v;
+      else if(t.type==='expense') expense+=v;
+      else if(t.type==='saving') saving+=v;
+    });
+    var net = income - expense - saving;
+
+    var byCat = {};
+    tx.filter(function(t){return t.type==='expense';}).forEach(function(t){
+      var v = convert(t.amount, t.currency, S.baseCurrency);
+      byCat[t.category] = (byCat[t.category]||0) + v;
+    });
+    var catRows = Object.keys(byCat).map(function(k){return [k,byCat[k]];}).sort(function(a,b){return b[1]-a[1];});
+    var maxCat = catRows.length ? catRows[0][1] : 1;
+
+    var accCards = S.accounts.map(function(a){
+      var bal = S.transactions.filter(function(t){return t.accountId===a.id;}).reduce(function(sum,t){
+        var sign = t.type==='income' ? 1 : -1;
+        return sum + sign*t.amount;
+      }, 0);
+      return '<div class="card" style="border-left:3px solid '+a.tag+';border-radius:8px">'+
+        '<div class="eyebrow">'+esc(a.name)+'</div>'+
+        '<div class="mono" style="font-size:19px;font-weight:600;margin-top:4px">'+fmt(bal, a.currency)+'</div>'+
+        '</div>';
+    }).join('');
+
+    var out = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+      '<input type="month" value="'+dashMonth+'" id="dashMonthInput" style="width:auto"/>'+
+      '</div>';
+
+    out += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">'+
+      metricCard('Ingresos', fmt(income, S.baseCurrency), '#0F6E66')+
+      metricCard('Egresos', fmt(expense, S.baseCurrency), '#B23A2E')+
+      metricCard('A ahorro', fmt(saving, S.baseCurrency), '#B8860B')+
+      metricCard('Neto del mes', fmt(net, S.baseCurrency), net>=0?'#0F6E66':'#B23A2E')+
+    '</div>';
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Saldo por cuenta</div>';
+    out += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:26px">'+accCards+'</div>';
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Gasto por categoría este mes</div>';
+    if(catRows.length===0){
+      out += emptyState('Sin gastos registrados este mes.', 'Agrega tu primer movimiento en la pestaña Movimientos.');
+    } else {
+      out += '<div class="card">' + catRows.map(function(r){
+        var pct = Math.round((r[1]/maxCat)*100);
+        return '<div style="margin-bottom:10px">'+
+          '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px">'+
+            '<span>'+esc(r[0])+'</span><span class="mono">'+fmt(r[1], S.baseCurrency)+'</span>'+
+          '</div>'+
+          '<div style="height:6px;background:#F0ECE0;border-radius:3px overflow:hidden"><div style="height:6px;width:'+pct+'%;background:#B23A2E;border-radius:3px"></div></div>'+
+        '</div>';
+      }).join('') + '</div>';
+    }
+
+    return wrapClose(out);
+  }
+
+  function metricCard(label, value, color){
+    return '<div style="background:#F3EFE6;border-radius:10px;padding:14px 16px">'+
+      '<div class="eyebrow">'+label+'</div>'+
+      '<div class="mono" style="font-size:20px;font-weight:700;margin-top:4px;color:'+color+'">'+value+'</div>'+
+    '</div>';
+  }
+
+  function emptyState(title, body){
+    return '<div style="text-align:center;padding:36px 20px;border:1px dashed #D8D1C2;border-radius:10px;color:#8A8272">'+
+      '<div style="font-weight:600;color:#14213D;margin-bottom:4px">'+title+'</div>'+
+      '<div style="font-size:13px">'+body+'</div>'+
+    '</div>';
+  }
+
+  // ---------- PENDIENTES ----------
+  function renderPendientes(){
+    var out = '<div class="card" style="margin-bottom:20px">'+
+      '<div class="eyebrow" style="margin-bottom:12px">Agregar pendiente</div>'+
+      '<form id="pendForm">'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px">'+
+          '<div><label>Tipo</label><select name="kind"><option value="in">Por cobrar</option><option value="out">Por pagar</option></select></div>'+
+          '<div><label>Concepto</label><input type="text" name="concept" placeholder="Ej. Bettys semana 34" required/></div>'+
+          '<div><label>Monto</label><input type="number" step="0.01" min="0.01" name="amount" required/></div>'+
+          '<div><label>Moneda</label><select name="currency">'+CURRENCIES.map(function(c){return '<option'+(c===S.baseCurrency?' selected':'')+'>'+c+'</option>';}).join('')+'</select></div>'+
+          '<div><label>Cuenta</label><select name="accountId">'+S.accounts.map(function(a){return '<option value="'+a.id+'">'+esc(a.name)+'</option>';}).join('')+'</select></div>'+
+          '<div><label>Fecha esperada</label><input type="date" name="dueDate" required/></div>'+
+        '</div>'+
+        '<button type="submit" class="btn">Agregar pendiente</button>'+
+      '</form>'+
+    '</div>';
+
+    var open = S.pending.filter(function(p){return p.status==='open';}).sort(function(a,b){return a.dueDate.localeCompare(b.dueDate);});
+    var cobrar = open.filter(function(p){return p.kind==='in';});
+    var pagar = open.filter(function(p){return p.kind==='out';});
+
+    var totalCobrar = cobrar.reduce(function(s,p){return s+convert(p.amount,p.currency,S.baseCurrency);},0);
+    var totalPagar = pagar.reduce(function(s,p){return s+convert(p.amount,p.currency,S.baseCurrency);},0);
+
+    out += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px">'+
+      metricCard('Por cobrar', fmt(totalCobrar, S.baseCurrency), '#0F6E66')+
+      metricCard('Por pagar', fmt(totalPagar, S.baseCurrency), '#B23A2E')+
+      metricCard('Neto pendiente', fmt(totalCobrar-totalPagar, S.baseCurrency), (totalCobrar-totalPagar)>=0?'#0F6E66':'#B23A2E')+
+    '</div>';
+
+    out += renderPendList('Por cobrar', cobrar, '#0F6E66');
+    out += renderPendList('Por pagar', pagar, '#B23A2E');
+
+    var resolved = S.pending.filter(function(p){return p.status==='resolved';});
+    if(resolved.length){
+      out += '<details style="margin-top:10px"><summary class="eyebrow" style="cursor:pointer">Ver '+resolved.length+' resueltos</summary>';
+      out += renderPendList('', resolved, '#8A8272', true);
+      out += '</details>';
+    }
+
+    return wrapClose(out);
+  }
+
+  function renderPendList(title, items, color, isResolved){
+    var out = '';
+    if(title) out += '<div class="eyebrow" style="margin:18px 0 10px">'+title+' ('+items.length+')</div>';
+    if(items.length===0 && !isResolved){
+      out += emptyState('Nada pendiente aquí.', 'Agrégalo arriba en cuanto sepas que viene.');
+      return out;
+    }
+    out += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:6px">';
+    out += items.map(function(p){
+      var acc = accountById(p.accountId);
+      var days = Math.ceil((new Date(p.dueDate) - new Date())/86400000);
+      var daysLabel = isResolved ? 'resuelto' : (days<0 ? 'atrasado '+Math.abs(days)+' días' : (days===0?'hoy':'en '+days+' días'));
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #F0ECE0">'+
+        '<div>'+
+          '<div style="font-size:13px;font-weight:600">'+esc(p.concept)+'</div>'+
+          '<div class="mono" style="font-size:11px;color:#8A8272">'+p.dueDate+' · '+(acc?esc(acc.name):'—')+' · '+daysLabel+'</div>'+
+        '</div>'+
+        '<div style="display:flex;align-items:center;gap:10px">'+
+          '<div class="mono" style="font-weight:700;color:'+color+'">'+fmt(p.amount, p.currency)+'</div>'+
+          (isResolved ? '' : '<button class="btn-ghost" data-resolve-pend="'+p.id+'">Ya '+(p.kind==='in'?'cobré':'pagué')+'</button>')+
+          '<button class="btn-danger" data-del-pend="'+p.id+'">Eliminar</button>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+    out += '</div>';
+    return out;
+  }
+
+  // ---------- PROYECCIÓN ----------
+  var proyTargetDate = (function(){ var d=new Date(); d.setDate(d.getDate()+14); return d.toISOString().slice(0,10); })();
+  var proyTargetBalance = 0;
+
+  function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+  function buildTimeline(targetDate){
+    var events = [];
+    var liquidTotal = 0;
+    S.accounts.forEach(function(a){
+      var bal = S.transactions.filter(function(t){return t.accountId===a.id;}).reduce(function(sum,t){
+        var sign = t.type==='income' ? 1 : -1;
+        return sum + sign*t.amount;
+      }, 0);
+      liquidTotal += convert(bal, a.currency, S.baseCurrency);
+    });
+    events.push({date: todayStr(), label:'Saldo líquido hoy', amount: liquidTotal});
+    S.pending.filter(function(p){ return p.status==='open' && p.dueDate <= targetDate; })
+      .forEach(function(p){
+        var v = convert(p.amount, p.currency, S.baseCurrency);
+        events.push({date: p.dueDate, label: p.concept, amount: p.kind==='in' ? v : -v});
+      });
+    events.sort(function(a,b){ return a.date.localeCompare(b.date); });
+    var running = 0;
+    var points = events.map(function(e){ running += e.amount; return {date:e.date, label:e.label, delta:e.amount, balance:running}; });
+    return points;
+  }
+
+  function renderProyeccion(){
+    var points = buildTimeline(proyTargetDate);
+    var projected = points.length ? points[points.length-1].balance : 0;
+    var gap = proyTargetBalance - projected;
+
+    var out = '<div class="card" style="margin-bottom:20px">'+
+      '<div class="eyebrow" style="margin-bottom:12px">¿Voy en verde?</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:6px">'+
+        '<div><label>Fecha objetivo</label><input type="date" id="proyDate" value="'+proyTargetDate+'"/></div>'+
+        '<div><label>Saldo objetivo ('+S.baseCurrency+')</label><input type="number" step="1" id="proyBalance" value="'+proyTargetBalance+'"/></div>'+
+      '</div>'+
+    '</div>';
+
+    out += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px">'+
+      metricCard('Proyectado al '+proyTargetDate, fmt(projected, S.baseCurrency), projected>=proyTargetBalance?'#0F6E66':'#B23A2E')+
+      (gap>0 ? metricCard('Te falta', fmt(gap, S.baseCurrency), '#B23A2E') : metricCard('Vas sobrado por', fmt(-gap, S.baseCurrency), '#0F6E66'))+
+    '</div>';
+
+    out += '<div class="card" style="margin-bottom:22px"><canvas id="balanceChart" height="180"></canvas></div>';
+
+    if(gap > 0){
+      out += '<div class="eyebrow" style="margin-bottom:10px">Cuántas horas necesitas</div>';
+      if(S.jobs.length===0){
+        out += emptyState('No tienes trabajos configurados.', 'Agrega uno en Cuentas → Trabajos, con su tarifa por hora.');
+      } else {
+        out += '<div class="card">' + S.jobs.map(function(j){
+          var netRateOwn = j.hourlyRate * (1 - j.taxRate);
+          var netRateBase = convert(netRateOwn, j.currency, S.baseCurrency);
+          var hours = gap / netRateBase;
+          var lastDate = new Date(proyTargetDate); lastDate.setDate(lastDate.getDate() - (j.payLagDays||0));
+          var lastDateStr = lastDate.toISOString().slice(0,10);
+          var tooLate = lastDateStr < todayStr();
+          return '<div style="padding:10px 0;border-bottom:1px solid #F0ECE0">'+
+            '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600"><span>'+esc(j.name)+'</span><span class="mono">~'+hours.toFixed(1)+' h</span></div>'+
+            '<div style="font-size:12px;color:#8A8272;margin-top:2px">'+fmt(netRateOwn, j.currency)+'/h neto est. · '+
+              (tooLate ? '<span style="color:#B23A2E">el turno ya tendría que haber sido antes de hoy para pagarte a tiempo (retraso de pago ~'+j.payLagDays+'d)</span>' : 'trabájalo antes del '+lastDateStr+' para que alcance a pagarte (retraso ~'+j.payLagDays+'d)')+
+            '</div>'+
+          '</div>';
+        }).join('') + '</div>';
+      }
+    } else {
+      out += emptyState('Vas en verde para esta fecha.', 'Con lo que ya tienes confirmado te alcanza. Puedes mover la fecha objetivo más lejos para planear con más margen.');
+    }
+
+    out += '<div class="eyebrow" style="margin:22px 0 10px">Movimientos que arman esta proyección</div>';
+    out += '<div class="card" style="padding:0;overflow:hidden">';
+    out += points.map(function(p){
+      var color = p.delta>=0 ? '#0F6E66' : '#B23A2E';
+      return '<div style="display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #F0ECE0;font-size:13px">'+
+        '<span>'+p.date+' · '+esc(p.label)+'</span>'+
+        '<span class="mono" style="color:'+color+'">'+(p.delta>=0?'+':'')+fmt(p.delta, S.baseCurrency)+' → '+fmt(p.balance, S.baseCurrency)+'</span>'+
+      '</div>';
+    }).join('');
+    out += '</div>';
+
+    return wrapClose(out);
+  }
+
+  function drawBalanceChart(){
+    var canvas = document.getElementById('balanceChart');
+    if(!canvas || typeof Chart === 'undefined') return;
+    var points = buildTimeline(proyTargetDate);
+    if(window._balanceChartInstance){ window._balanceChartInstance.destroy(); }
+    window._balanceChartInstance = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: points.map(function(p){return p.date;}),
+        datasets: [{
+          label: 'Saldo proyectado ('+S.baseCurrency+')',
+          data: points.map(function(p){return p.balance;}),
+          borderColor: '#0F6E66',
+          backgroundColor: 'rgba(15,110,102,0.1)',
+          fill: true,
+          tension: 0.15,
+          pointRadius: 3
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { grid: { color: '#F0ECE0' } },
+          x: { grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // ---------- MOVIMIENTOS ----------
+  function renderMovimientos(){
+    var out = '';
+    out += '<div class="card" style="margin-bottom:20px">'+
+      '<div class="eyebrow" style="margin-bottom:12px">Agregar movimiento</div>'+
+      '<form id="txForm">'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px">'+
+          '<div><label>Fecha</label><input type="date" name="date" value="'+new Date().toISOString().slice(0,10)+'" required/></div>'+
+          '<div><label>Cuenta</label><select name="accountId">'+S.accounts.map(function(a){return '<option value="'+a.id+'">'+esc(a.name)+' ('+a.currency+')</option>';}).join('')+'</select></div>'+
+          '<div><label>Tipo</label><select name="type" id="txType"><option value="expense">Egreso</option><option value="income">Ingreso</option><option value="saving">Ahorro</option></select></div>'+
+          '<div id="txCategoryWrap"><label>Categoría</label><select name="category">'+EXPENSE_CATS.map(function(c){return '<option>'+c+'</option>';}).join('')+'</select></div>'+
+          '<div><label>Monto</label><input type="number" step="0.01" min="0.01" name="amount" placeholder="0.00" required/></div>'+
+        '</div>'+
+        '<div style="margin-bottom:12px"><label>Nota (opcional)</label><input type="text" name="note" placeholder="Ej. súper del finde"/></div>'+
+        '<button type="submit" class="btn">Agregar</button>'+
+      '</form>'+
+    '</div>';
+
+    out += '<div class="card" style="margin-bottom:20px">'+
+      '<div class="eyebrow" style="margin-bottom:10px">Importar desde CSV (statement de banco)</div>'+
+      (importState ? renderImportPanel() : (
+        '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
+          '<select id="importAccount" style="width:auto">'+S.accounts.map(function(a){return '<option value="'+a.id+'">'+esc(a.name)+'</option>';}).join('')+'</select>'+
+          '<input type="file" id="csvFile" accept=".csv" style="width:auto"/>'+
+        '</div>'
+      )) +
+    '</div>';
+
+    var sorted = S.transactions.slice().sort(function(a,b){ return b.date.localeCompare(a.date); });
+    out += '<div class="eyebrow" style="margin-bottom:10px">Historial ('+sorted.length+')</div>';
+    if(sorted.length===0){
+      out += emptyState('Aún no hay movimientos.', 'Agrega el primero arriba o importa un CSV.');
+    } else {
+      out += '<div class="card" style="padding:0;overflow:hidden">';
+      out += sorted.map(function(t){
+        var acc = accountById(t.accountId);
+        var color = t.type==='income' ? '#0F6E66' : (t.type==='expense' ? '#B23A2E' : '#B8860B');
+        var sign = t.type==='income' ? '+' : '-';
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #F0ECE0">'+
+          '<div>'+
+            '<div style="font-size:13px;font-weight:600">'+esc(t.category)+(t.note?' · <span style="font-weight:400;color:#8A8272">'+esc(t.note)+'</span>':'')+'</div>'+
+            '<div class="mono" style="font-size:11px;color:#8A8272">'+t.date+' · '+(acc?esc(acc.name):'—')+'</div>'+
+          '</div>'+
+          '<div style="display:flex;align-items:center;gap:10px">'+
+            '<div class="mono" style="font-weight:700;color:'+color+'">'+sign+fmt(t.amount, t.currency)+'</div>'+
+            '<button class="btn-danger" data-del-tx="'+t.id+'">Eliminar</button>'+
+          '</div>'+
+        '</div>';
+      }).join('');
+      out += '</div>';
+    }
+    return wrapClose(out);
+  }
+
+  function renderImportPanel(){
+    var rows = importState.rows.slice(0,5);
+    var headers = importState.headers;
+    var out = '<div>';
+    out += '<div style="font-size:12px;color:#8A8272;margin-bottom:10px">Vista previa · '+importState.rows.length+' filas encontradas en '+esc(importState.filename)+'</div>';
+    out += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">';
+    ['date','desc','amount'].forEach(function(field){
+      var lbl = field==='date'?'Columna de fecha':(field==='desc'?'Columna de descripción':'Columna de monto');
+      out += '<div><label>'+lbl+'</label><select data-map="'+field+'">'+headers.map(function(h,i){
+        return '<option value="'+i+'"'+(importState.map[field]===i?' selected':'')+'>'+esc(h)+'</option>';
+      }).join('')+'</select></div>';
+    });
+    out += '</div>';
+    out += '<div style="margin-bottom:12px"><label>Convención de signo</label><select id="signConv">'+
+      '<option value="pos-income"'+(importState.signConv==='pos-income'?' selected':'')+'>Positivo = ingreso, negativo = egreso</option>'+
+      '<option value="pos-expense"'+(importState.signConv==='pos-expense'?' selected':'')+'>Positivo = egreso, negativo = ingreso</option>'+
+    '</select></div>';
+    out += '<div style="overflow-x:auto;margin-bottom:14px"><table class="mono" style="width:100%;font-size:11px;border-collapse:collapse">';
+    out += '<tr>'+headers.map(function(h){return '<th style="text-align:left;padding:4px 8px;border-bottom:1px solid #E9E3D5;color:#8A8272">'+esc(h)+'</th>';}).join('')+'</tr>';
+    rows.forEach(function(r){
+      out += '<tr>'+r.map(function(c){return '<td style="padding:4px 8px;border-bottom:1px solid #F0ECE0">'+esc(c)+'</td>';}).join('')+'</tr>';
+    });
+    out += '</table></div>';
+    out += '<div style="display:flex;gap:10px">'+
+      '<button class="btn" id="confirmImport">Importar '+importState.rows.length+' movimientos</button>'+
+      '<button class="btn-ghost" id="cancelImport">Cancelar</button>'+
+    '</div></div>';
+    return out;
+  }
+
+  function parseCSV(text){
+    var lines = text.split(/\r?\n/).filter(function(l){return l.trim().length;});
+    if(!lines.length) return {headers:[],rows:[]};
+    function parseLine(line){
+      var out=[], cur='', inQ=false;
+      for(var i=0;i<line.length;i++){
+        var c = line[i];
+        if(c==='"'){ inQ = !inQ; }
+        else if(c===',' && !inQ){ out.push(cur); cur=''; }
+        else cur+=c;
+      }
+      out.push(cur);
+      return out.map(function(s){return s.trim();});
+    }
+    var headers = parseLine(lines[0]);
+    var rows = lines.slice(1).map(parseLine);
+    return {headers:headers, rows:rows};
+  }
+
+  function guessCol(headers, keywords){
+    for(var i=0;i<headers.length;i++){
+      var h = headers[i].toLowerCase();
+      for(var k=0;k<keywords.length;k++){
+        if(h.indexOf(keywords[k])>-1) return i;
+      }
+    }
+    return 0;
+  }
+
+  // ---------- METAS ----------
+  function renderMetas(){
+    var out = '<div class="card" style="margin-bottom:22px">'+
+      '<div class="eyebrow" style="margin-bottom:12px">Nueva meta de viaje</div>'+
+      '<form id="goalForm">'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px">'+
+          '<div><label>Nombre</label><input type="text" name="name" placeholder="Ej. Bali diciembre" required/></div>'+
+          '<div><label>Monto meta</label><input type="number" step="0.01" min="1" name="target" required/></div>'+
+          '<div><label>Moneda</label><select name="currency">'+CURRENCIES.map(function(c){return '<option'+(c===S.baseCurrency?' selected':'')+'>'+c+'</option>';}).join('')+'</select></div>'+
+          '<div><label>Fecha objetivo</label><input type="date" name="date" required/></div>'+
+        '</div>'+
+        '<button type="submit" class="btn">Crear meta</button>'+
+      '</form>'+
+    '</div>';
+
+    if(S.goals.length===0){
+      out += emptyState('No tienes metas de viaje activas.', 'Crea la primera y arma tu ruta de ahorro.');
+      return wrapClose(out);
+    }
+
+    out += S.goals.map(function(g, idx){
+      var saved = S.transactions.filter(function(t){return t.goalId===g.id;}).reduce(function(sum,t){
+        return sum + convert(t.amount, t.currency, g.currency);
+      }, 0);
+      var pct = Math.max(0, Math.min(100, Math.round((saved/g.target)*100)));
+      var days = Math.ceil((new Date(g.date) - new Date())/86400000);
+      var daysLabel = days>=0 ? ('faltan '+days+' días') : 'fecha vencida';
+      var color = TAGS[idx % TAGS.length];
+      return '<div class="card" style="margin-bottom:16px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'+
+          '<div style="font-weight:700;font-size:15px">'+esc(g.name)+'</div>'+
+          '<button class="btn-danger" data-del-goal="'+g.id+'">Eliminar</button>'+
+        '</div>'+
+        '<div class="mono" style="font-size:12px;color:#8A8272;margin-bottom:14px">'+daysLabel+' · meta '+g.date+'</div>'+
+        '<div style="position:relative;height:28px;margin:0 10px 8px">'+
+          '<div style="position:absolute;top:12px;left:0;right:0;height:0;border-top:2px dashed #D8D1C2"></div>'+
+          '<div style="position:absolute;top:8px;left:-4px;width:8px;height:8px;border-radius:50%;background:'+color+'"></div>'+
+          '<div style="position:absolute;top:6px;right:-6px;font-size:14px">📍</div>'+
+          '<div style="position:absolute;top:2px;left:calc('+pct+'% - 8px);font-size:16px;transition:left .3s">✈️</div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:12px">'+
+          '<span class="mono" style="font-weight:600">'+fmt(saved, g.currency)+' de '+fmt(g.target, g.currency)+'</span>'+
+          '<span class="mono" style="color:'+color+';font-weight:700">'+pct+'%</span>'+
+        '</div>'+
+        '<button class="btn-ghost" data-add-contrib="'+g.id+'">Agregar aportación</button>'+
+      '</div>';
+    }).join('');
+
+    return wrapClose(out);
+  }
+
+  // ---------- CUENTAS ----------
+  function renderCuentas(){
+    var out = '<div class="eyebrow" style="margin-bottom:10px">Cuentas</div>';
+    out += '<div class="card" style="margin-bottom:22px">';
+    out += S.accounts.map(function(a){
+      return '<div style="display:grid;grid-template-columns:1fr 110px 30px;gap:8px;align-items:center;margin-bottom:10px">'+
+        '<input type="text" data-acc-name="'+a.id+'" value="'+esc(a.name)+'"/>'+
+        '<select data-acc-cur="'+a.id+'">'+CURRENCIES.map(function(c){return '<option'+(c===a.currency?' selected':'')+'>'+c+'</option>';}).join('')+'</select>'+
+        '<div style="width:16px;height:16px;border-radius:50%;background:'+a.tag+'"></div>'+
+      '</div>';
+    }).join('');
+    out += '</div>';
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Trabajos (para el calculador de horas en Proyección)</div>';
+    out += '<div class="card" style="margin-bottom:22px">';
+    if(S.jobs.length===0){ out += '<div style="font-size:13px;color:#8A8272;margin-bottom:10px">Sin trabajos configurados.</div>'; }
+    out += S.jobs.map(function(j){
+      return '<div style="display:grid;grid-template-columns:1.2fr .8fr .7fr .7fr .7fr 30px;gap:8px;align-items:center;margin-bottom:10px">'+
+        '<input type="text" data-job-name="'+j.id+'" value="'+esc(j.name)+'" placeholder="Nombre"/>'+
+        '<input type="number" step="0.01" data-job-rate="'+j.id+'" value="'+j.hourlyRate+'" placeholder="$/hr"/>'+
+        '<select data-job-cur="'+j.id+'">'+CURRENCIES.map(function(c){return '<option'+(c===j.currency?' selected':'')+'>'+c+'</option>';}).join('')+'</select>'+
+        '<input type="number" step="0.01" min="0" max="1" data-job-tax="'+j.id+'" value="'+j.taxRate+'" placeholder="% tax"/>'+
+        '<input type="number" step="1" min="0" data-job-lag="'+j.id+'" value="'+j.payLagDays+'" placeholder="días retraso"/>'+
+        '<button class="btn-danger" data-del-job="'+j.id+'" style="padding:6px">×</button>'+
+      '</div>';
+    }).join('');
+    out += '<div style="font-size:11px;color:#8A8272;margin-bottom:10px">Orden: nombre, tarifa/hora, moneda, % de impuesto (0.16 = 16%), días de retraso entre el turno y que te paguen.</div>';
+    out += '<button class="btn-ghost" id="addJob">+ Agregar trabajo</button>';
+    out += '</div>';
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Moneda base del panel</div>';
+    out += '<div class="card" style="margin-bottom:22px">'+
+      '<select id="baseCurSel" style="width:auto">'+CURRENCIES.map(function(c){return '<option'+(c===S.baseCurrency?' selected':'')+'>'+c+'</option>';}).join('')+'</select>'+
+    '</div>';
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Tipo de cambio (unidades de MXN por 1 unidad de moneda, editable)</div>';
+    out += '<div class="card" style="margin-bottom:22px">';
+    out += CURRENCIES.filter(function(c){return c!=='MXN';}).map(function(c){
+      return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
+        '<div class="mono" style="width:50px">'+c+'</div>'+
+        '<input type="number" step="0.01" data-rate="'+c+'" value="'+S.rates[c]+'" style="width:120px"/>'+
+        '<div style="font-size:12px;color:#8A8272">MXN por 1 '+c+'</div>'+
+      '</div>';
+    }).join('');
+    out += '</div>';
+
+    out += '<button class="btn-ghost" style="border-color:#B23A2E;color:#B23A2E" id="resetData">Reiniciar todos los datos</button>';
+
+    return wrapClose(out);
+  }
+
+  // ---------- events ----------
+  function bindEvents(){
+    document.querySelectorAll('[data-tab]').forEach(function(el){
+      el.addEventListener('click', function(){ activeTab = el.getAttribute('data-tab'); render(); });
+    });
+
+    var monthInput = document.getElementById('dashMonthInput');
+    if(monthInput) monthInput.addEventListener('change', function(){ dashMonth = this.value; render(); });
+
+    var proyDate = document.getElementById('proyDate');
+    if(proyDate) proyDate.addEventListener('change', function(){ proyTargetDate = this.value; render(); });
+    var proyBalance = document.getElementById('proyBalance');
+    if(proyBalance) proyBalance.addEventListener('change', function(){ proyTargetBalance = parseFloat(this.value)||0; render(); });
+
+    var txForm = document.getElementById('txForm');
+    if(txForm){
+      var typeSel = document.getElementById('txType');
+      typeSel.addEventListener('change', function(){
+        var wrap = document.getElementById('txCategoryWrap');
+        var cats = this.value==='income' ? INCOME_CATS : (this.value==='saving' ? S.goals.map(function(g){return g.name;}) : EXPENSE_CATS);
+        if(this.value==='saving' && S.goals.length===0){
+          wrap.innerHTML = '<label>Categoría</label><input type="text" name="category" value="Ahorro general"/>';
+        } else {
+          wrap.innerHTML = '<label>Categoría</label><select name="category">'+cats.map(function(c){return '<option>'+esc(c)+'</option>';}).join('')+'</select>';
+        }
+      });
+      txForm.addEventListener('submit', function(e){
+        e.preventDefault();
+        var f = new FormData(txForm);
+        var accountId = f.get('accountId');
+        var acc = accountById(accountId);
+        var type = f.get('type');
+        var category = f.get('category');
+        var goalId = null;
+        if(type==='saving'){
+          var g = S.goals.find(function(g){return g.name===category;});
+          if(g) goalId = g.id;
+        }
+        S.transactions.push({
+          id: uid(), date: f.get('date'), accountId: accountId, type: type,
+          category: category, amount: parseFloat(f.get('amount')), currency: acc.currency,
+          note: f.get('note')||'', goalId: goalId
+        });
+        save(); render();
+      });
+    }
+
+    var pendForm = document.getElementById('pendForm');
+    if(pendForm){
+      pendForm.addEventListener('submit', function(e){
+        e.preventDefault();
+        var f = new FormData(pendForm);
+        S.pending.push({
+          id: uid(), kind: f.get('kind'), concept: f.get('concept'),
+          amount: parseFloat(f.get('amount')), currency: f.get('currency'),
+          accountId: f.get('accountId'), dueDate: f.get('dueDate'), status: 'open'
+        });
+        save(); render();
+      });
+    }
+
+    document.querySelectorAll('[data-resolve-pend]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = el.getAttribute('data-resolve-pend');
+        var p = S.pending.find(function(x){return x.id===id;});
+        if(!p) return;
+        var acc = accountById(p.accountId);
+        S.transactions.push({
+          id: uid(), date: new Date().toISOString().slice(0,10), accountId: p.accountId,
+          type: p.kind==='in' ? 'income' : 'expense',
+          category: p.kind==='in' ? 'Sueldo/Shifts' : 'Otros',
+          amount: convert(p.amount, p.currency, acc.currency), currency: acc.currency,
+          note: p.concept, goalId: null
+        });
+        p.status = 'resolved';
+        save(); render();
+      });
+    });
+
+    document.querySelectorAll('[data-del-pend]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = el.getAttribute('data-del-pend');
+        S.pending = S.pending.filter(function(p){return p.id!==id;});
+        save(); render();
+      });
+    });
+
+    var csvFile = document.getElementById('csvFile');
+    if(csvFile){
+      csvFile.addEventListener('change', function(){
+        var file = this.files[0];
+        if(!file) return;
+        var accId = document.getElementById('importAccount').value;
+        var reader = new FileReader();
+        reader.onload = function(e){
+          var parsed = parseCSV(e.target.result);
+          if(!parsed.headers.length){ alert('No se pudo leer el archivo.'); return; }
+          importState = {
+            filename: file.name, headers: parsed.headers, rows: parsed.rows, accountId: accId,
+            map: {
+              date: guessCol(parsed.headers, ['fecha','date']),
+              desc: guessCol(parsed.headers, ['desc','concepto','detalle','merchant']),
+              amount: guessCol(parsed.headers, ['monto','amount','importe','value'])
+            },
+            signConv: 'pos-income'
+          };
+          render();
+        };
+        reader.readAsText(file);
+      });
+    }
+
+    document.querySelectorAll('[data-map]').forEach(function(el){
+      el.addEventListener('change', function(){
+        importState.map[el.getAttribute('data-map')] = parseInt(el.value,10);
+      });
+    });
+    var signSel = document.getElementById('signConv');
+    if(signSel) signSel.addEventListener('change', function(){ importState.signConv = this.value; });
+
+    var cancelImp = document.getElementById('cancelImport');
+    if(cancelImp) cancelImp.addEventListener('click', function(){ importState = null; render(); });
+
+    var confirmImp = document.getElementById('confirmImport');
+    if(confirmImp) confirmImp.addEventListener('click', function(){
+      var acc = accountById(importState.accountId);
+      var added = 0;
+      importState.rows.forEach(function(r){
+        var rawDate = r[importState.map.date] || '';
+        var rawAmount = r[importState.map.amount] || '0';
+        var desc = r[importState.map.desc] || '';
+        var amt = parseFloat(rawAmount.replace(/[^0-9.\-]/g,''));
+        if(isNaN(amt) || amt===0) return;
+        var isIncome = importState.signConv==='pos-income' ? amt>0 : amt<0;
+        var date = normalizeDate(rawDate);
+        S.transactions.push({
+          id: uid(), date: date, accountId: acc.id, type: isIncome?'income':'expense',
+          category: 'Sin categorizar', amount: Math.abs(amt), currency: acc.currency,
+          note: desc, goalId: null
+        });
+        added++;
+      });
+      save();
+      importState = null;
+      activeTab = 'movimientos';
+      render();
+    });
+
+    document.querySelectorAll('[data-del-tx]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = el.getAttribute('data-del-tx');
+        S.transactions = S.transactions.filter(function(t){return t.id!==id;});
+        save(); render();
+      });
+    });
+
+    var goalForm = document.getElementById('goalForm');
+    if(goalForm){
+      goalForm.addEventListener('submit', function(e){
+        e.preventDefault();
+        var f = new FormData(goalForm);
+        S.goals.push({id:uid(), name:f.get('name'), target:parseFloat(f.get('target')), currency:f.get('currency'), date:f.get('date')});
+        save(); render();
+      });
+    }
+
+    document.querySelectorAll('[data-del-goal]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = el.getAttribute('data-del-goal');
+        if(!confirm('¿Eliminar esta meta? Las aportaciones ya registradas se quedan como ahorro sin meta.')) return;
+        S.goals = S.goals.filter(function(g){return g.id!==id;});
+        S.transactions.forEach(function(t){ if(t.goalId===id) t.goalId=null; });
+        save(); render();
+      });
+    });
+
+    document.querySelectorAll('[data-add-contrib]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var goalId = el.getAttribute('data-add-contrib');
+        var g = goalById(goalId);
+        var amountStr = prompt('¿Cuánto quieres aportar a "'+g.name+'"? (en '+g.currency+')');
+        if(!amountStr) return;
+        var amount = parseFloat(amountStr);
+        if(isNaN(amount) || amount<=0){ alert('Monto inválido.'); return; }
+        var accNames = S.accounts.map(function(a,i){return (i+1)+') '+a.name;}).join('\n');
+        var accIdxStr = prompt('¿De qué cuenta sale el dinero?\n'+accNames);
+        var accIdx = parseInt(accIdxStr,10)-1;
+        var acc = S.accounts[accIdx];
+        if(!acc){ alert('Cuenta inválida.'); return; }
+        S.transactions.push({
+          id: uid(), date: new Date().toISOString().slice(0,10), accountId: acc.id, type:'saving',
+          category: g.name, amount: convert(amount, g.currency, acc.currency), currency: acc.currency,
+          note: 'Aportación a '+g.name, goalId: g.id
+        });
+        save(); render();
+      });
+    });
+
+    document.querySelectorAll('[data-acc-name]').forEach(function(el){
+      el.addEventListener('change', function(){
+        var a = accountById(el.getAttribute('data-acc-name'));
+        a.name = el.value; save();
+      });
+    });
+    document.querySelectorAll('[data-acc-cur]').forEach(function(el){
+      el.addEventListener('change', function(){
+        var a = accountById(el.getAttribute('data-acc-cur'));
+        a.currency = el.value; save(); render();
+      });
+    });
+    document.querySelectorAll('[data-job-name]').forEach(function(el){
+      el.addEventListener('change', function(){ jobById(el.getAttribute('data-job-name')).name = el.value; save(); });
+    });
+    document.querySelectorAll('[data-job-rate]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-rate')).hourlyRate = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-cur]').forEach(function(el){
+      el.addEventListener('change', function(){ jobById(el.getAttribute('data-job-cur')).currency = el.value; save(); });
+    });
+    document.querySelectorAll('[data-job-tax]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-tax')).taxRate = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-lag]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseInt(el.value,10); if(!isNaN(v)) { jobById(el.getAttribute('data-job-lag')).payLagDays = v; save(); } });
+    });
+    document.querySelectorAll('[data-del-job]').forEach(function(el){
+      el.addEventListener('click', function(){
+        S.jobs = S.jobs.filter(function(j){return j.id!==el.getAttribute('data-del-job');});
+        save(); render();
+      });
+    });
+    var addJobBtn = document.getElementById('addJob');
+    if(addJobBtn) addJobBtn.addEventListener('click', function(){
+      S.jobs.push({id:uid(), name:'Nuevo trabajo', hourlyRate:0, currency:S.baseCurrency, taxRate:0.15, payLagDays:7, tag:TAGS[S.jobs.length % TAGS.length]});
+      save(); render();
+    });
+
+    var baseSel = document.getElementById('baseCurSel');
+    if(baseSel) baseSel.addEventListener('change', function(){ S.baseCurrency = this.value; save(); render(); });
+
+    document.querySelectorAll('[data-rate]').forEach(function(el){
+      el.addEventListener('change', function(){
+        var cur = el.getAttribute('data-rate');
+        var v = parseFloat(el.value);
+        if(!isNaN(v) && v>0){ S.rates[cur] = v; save(); render(); }
+      });
+    });
+
+    var resetBtn = document.getElementById('resetData');
+    if(resetBtn) resetBtn.addEventListener('click', function(){
+      if(confirm('Esto borra todos tus movimientos, cuentas y metas. ¿Seguro?')){
+        S = defaultState(); save(); activeTab='dashboard'; render();
+      }
+    });
+  }
+
+  function normalizeDate(raw){
+    raw = raw.trim();
+    var iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+    if(iso) return iso[1]+'-'+iso[2]+'-'+iso[3];
+    var dmy = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/.exec(raw);
+    if(dmy) return dmy[3]+'-'+pad(dmy[2])+'-'+pad(dmy[1]);
+    var d = new Date(raw);
+    if(!isNaN(d)) return d.toISOString().slice(0,10);
+    return new Date().toISOString().slice(0,10);
+  }
+  function pad(n){ n=String(n); return n.length<2 ? '0'+n : n; }
+
+  load();
+})();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("sw.js").catch(function(e){ console.warn("SW register failed", e); });
+  });
+}
+</script>
+</body>
+</html>
