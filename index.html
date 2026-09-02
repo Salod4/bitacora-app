@@ -50,22 +50,63 @@ html,body{margin:0;padding:0;background:#FBF9F4}
 
   function uid(){ return 'id-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8); }
 
+  var SCHEMA_VERSION = 5;
+
+  function knownRatesFor(name){
+    if(name==="Betty's") return {weekday:34.76, eveningThresholdHour:22, weekdayEvening:37.54, lateNight:38.93, saturday:41.72, sunday:41.72, publicHoliday:69.53};
+    if(name==='B&W') return {weekday:33.85, eveningThresholdHour:19, weekdayEvening:36.80, lateNight:38.28, saturday:40.62, sunday:47.39, publicHoliday:67.72};
+    return null;
+  }
+
+  // Reconstructed real shift history (from calendar + real payslips), reused by defaultState and by the repair migration
+  function seedShiftsFor(bettysId, bwId){
+    return [
+      // ---- Betty's: confirmados por payslip real, ya pagados ----
+      {id:uid(), jobId:bettysId, date:'2026-08-10', startTime:'10:00', endTime:'13:00', note:'Training online (7 módulos) — payslip real $104.29', paid:true},
+      {id:uid(), jobId:bettysId, date:'2026-08-13', startTime:'16:00', endTime:'19:00', note:'Primer turno — payslip real $105.33', paid:true},
+      {id:uid(), jobId:bettysId, date:'2026-08-18', startTime:'18:00', endTime:'22:30', note:'Grill — payslip real $156.23', paid:true},
+      {id:uid(), jobId:bettysId, date:'2026-08-26', startTime:'17:30', endTime:'22:00', note:'Training Grill 2 — payslip real $155.39, paga 3 sep, aún no cae', paid:false},
+      {id:uid(), jobId:bettysId, date:'2026-08-29', startTime:'17:30', endTime:'22:00', note:'Grill 1 sábado — payslip real $195.23, paga 3 sep, aún no cae', paid:false},
+      {id:uid(), jobId:bettysId, date:'2026-08-30', startTime:'12:00', endTime:'17:30', note:'Grill 1 domingo — payslip real $233.60, paga 3 sep, aún no cae', paid:false},
+      // ---- Betty's: aún sin payslip ----
+      {id:uid(), jobId:bettysId, date:'2026-09-02', startTime:'18:00', endTime:'22:00', note:'Training Grill 2', paid:false},
+      {id:uid(), jobId:bettysId, date:'2026-09-04', startTime:'12:00', endTime:'15:00', note:'Training Grill 1', paid:false},
+      // ---- B&W: confirmados por payslip real, ya pagados ----
+      {id:uid(), jobId:bwId, date:'2026-08-08', startTime:'13:45', endTime:'18:30', note:'SCG Retail @Merivale — payslip real $192.95', paid:true},
+      {id:uid(), jobId:bwId, date:'2026-08-14', startTime:'16:00', endTime:'21:30', note:'Opera House — Padel Invitational (Gucci) — payslip real $193.55', paid:true},
+      {id:uid(), jobId:bwId, date:'2026-08-15', startTime:'15:00', endTime:'20:30', note:'SBW Opera House — cubriste horas completas — payslip real $223.41', paid:true},
+      // ---- B&W: aún sin payslip ----
+      {id:uid(), jobId:bwId, date:'2026-08-23', startTime:'13:45', endTime:'18:00', note:'SFS Retail @Merivale — Island Bar', paid:false},
+      {id:uid(), jobId:bwId, date:'2026-08-28', startTime:'17:30', endTime:'23:30', note:'Cloak Attendant — Machine Hall', paid:false},
+      {id:uid(), jobId:bwId, date:'2026-09-01', startTime:'16:30', endTime:'22:00', note:'Machine Hall', paid:false},
+      {id:uid(), jobId:bwId, date:'2026-09-05', startTime:'13:45', endTime:'17:45', note:'Victor Trumper — SCG', paid:false}
+    ];
+  }
+
   function defaultState(){
+    var bettysId = uid();
+    var bwId = uid();
+    var revolutId = uid(), nuId = uid(), bbvaId = uid(), commbankId = uid();
     return {
+      schemaVersion: SCHEMA_VERSION,
       baseCurrency: 'MXN',
       rates: {MXN:1, AUD:12.3, GBP:23.5, USD:18.4, EUR:20.0},
       accounts: [
-        {id:uid(), name:'Revolut', currency:'GBP', tag:TAGS[0]},
-        {id:uid(), name:'Nu', currency:'MXN', tag:TAGS[1]},
-        {id:uid(), name:'BBVA', currency:'MXN', tag:TAGS[2]},
-        {id:uid(), name:'CommBank', currency:'AUD', tag:TAGS[3]}
+        {id:revolutId, name:'Revolut', currency:'AUD', tag:TAGS[0]},
+        {id:nuId, name:'Nu', currency:'MXN', tag:TAGS[1]},
+        {id:bbvaId, name:'BBVA', currency:'MXN', tag:TAGS[2]},
+        {id:commbankId, name:'CommBank', currency:'AUD', tag:TAGS[3]}
       ],
       transactions: [],
       goals: [],
-      pending: [],
+      pending: [
+        {id:uid(), kind:'out', concept:'Renta semanal', amount:360, currency:'AUD', accountId:commbankId, dueDate:'2026-08-31', status:'open', recurrence:'weekly'},
+        {id:uid(), kind:'out', concept:'BBVA — pago para no generar intereses (revisar monto cada mes en el nuevo estado de cuenta)', amount:15361.95, currency:'MXN', accountId:bbvaId, dueDate:'2026-09-10', status:'open', recurrence:'monthly'}
+      ],
+      shifts: seedShiftsFor(bettysId, bwId),
       jobs: [
-        {id:uid(), name:"Betty's", hourlyRate:34.76, currency:'AUD', taxRate:0.16, payLagDays:11, tag:TAGS[1]},
-        {id:uid(), name:'B&W', hourlyRate:40.62, currency:'AUD', taxRate:0.15, payLagDays:14, tag:TAGS[3]}
+        {id:bettysId, name:"Betty's", currency:'AUD', taxRate:0.16, payDelayDays:4, tag:TAGS[1], rates:knownRatesFor("Betty's")},
+        {id:bwId, name:'B&W', currency:'AUD', taxRate:0.16, payDelayDays:10, tag:TAGS[3], rates:knownRatesFor('B&W')}
       ]
     };
   }
@@ -141,9 +182,171 @@ html,body{margin:0;padding:0;background:#FBF9F4}
     if(!S.goals) S.goals = [];
     if(!S.pending) S.pending = [];
     if(!S.jobs) S.jobs = d.jobs;
+    if(!S.shifts) S.shifts = [];
+    S.pending.forEach(function(p){ if(!p.recurrence) p.recurrence = 'none'; });
+    S.shifts.forEach(function(s){ if(typeof s.paid !== 'boolean') s.paid = false; });
+    S.jobs.forEach(function(j){
+      if(!j.rates){
+        // migrate old flat hourlyRate jobs into the tiered schema (same rate everywhere until edited)
+        var r = j.hourlyRate || 0;
+        j.rates = {weekday:r, eveningThresholdHour:19, weekdayEvening:r, lateNight:r, saturday:r, sunday:r, publicHoliday:r};
+        delete j.hourlyRate;
+      }
+      if(j.payDelayDays==null){
+        j.payDelayDays = j.payLagDays!=null ? j.payLagDays : 7;
+      }
+      delete j.payLagDays;
+    });
+
+    // ---- Repair migration: fixes browsers that had old data saved before the rate-tier rework ----
+    if(!S.schemaVersion || S.schemaVersion < SCHEMA_VERSION){
+      S.jobs.forEach(function(j){
+        var kr = knownRatesFor(j.name);
+        if(kr) j.rates = kr; // overwrite whatever got flattened by the old bug with the real tiered rates
+        if(j.name==="Betty's") j.payDelayDays = 4;   // paid Thursday, 4 days after the week's Sunday
+        if(j.name==='B&W') j.payDelayDays = 10;      // paid Wednesday, 10 days after the week's Sunday
+      });
+      var bettysJob = S.jobs.find(function(j){return j.name==="Betty's";});
+      var bwJob = S.jobs.find(function(j){return j.name==='B&W';});
+      if(bettysJob && bwJob){
+        seedShiftsFor(bettysJob.id, bwJob.id).forEach(function(seed){
+          var exists = S.shifts.some(function(s){ return s.jobId===seed.jobId && s.date===seed.date; });
+          if(!exists) S.shifts.push(seed);
+        });
+      }
+      if(!S.pending.some(function(p){ return p.concept==='Renta semanal'; })){
+        var commbank = S.accounts.find(function(a){return a.name==='CommBank';});
+        S.pending.push({id:uid(), kind:'out', concept:'Renta semanal', amount:360, currency:'AUD', accountId: commbank?commbank.id:S.accounts[0].id, dueDate:'2026-08-31', status:'open', recurrence:'weekly'});
+      }
+      if(!S.pending.some(function(p){ return p.concept.indexOf('BBVA')===0; })){
+        var bbva = S.accounts.find(function(a){return a.name==='BBVA';});
+        S.pending.push({id:uid(), kind:'out', concept:'BBVA — pago para no generar intereses (revisar monto cada mes en el nuevo estado de cuenta)', amount:15361.95, currency:'MXN', accountId: bbva?bbva.id:S.accounts[0].id, dueDate:'2026-09-10', status:'open', recurrence:'monthly'});
+      }
+
+      // v3: dedupe shifts left behind by the old buggy migration (legacy hours-only entries
+      // alongside the new startTime/endTime ones for the same job+date) — keep the complete one.
+      var bestByKey = {};
+      S.shifts.forEach(function(s){
+        var key = s.jobId+'|'+s.date;
+        var cur = bestByKey[key];
+        var thisComplete = !!(s.startTime && s.endTime);
+        if(!cur || (thisComplete && !(cur.startTime && cur.endTime))) bestByKey[key] = s;
+      });
+      S.shifts = Object.keys(bestByKey).map(function(k){ return bestByKey[k]; });
+
+      // The Betty's payslip for 24-30 Aug (net $472.06) is dated 3 Sep but hasn't actually
+      // landed in the bank yet — un-mark those shifts as paid until confirmed via "Ya cobré".
+      var stillOwed = ['2026-08-26','2026-08-29','2026-08-30'];
+      S.shifts.forEach(function(s){
+        var job = jobById(s.jobId);
+        if(job && job.name==="Betty's" && stillOwed.indexOf(s.date)!==-1) s.paid = false;
+      });
+
+      S.schemaVersion = SCHEMA_VERSION;
+      save();
+    }
   }
 
   function jobById(id){ return S.jobs.find(function(j){return j.id===id;}); }
+  function shiftById(id){ return S.shifts.find(function(s){return s.id===id;}); }
+
+  function addDays(dateStr, days){
+    var d = new Date(dateStr+'T00:00:00');
+    d.setDate(d.getDate()+days);
+    return d.toISOString().slice(0,10);
+  }
+  function addMonths(dateStr, months){
+    var d = new Date(dateStr+'T00:00:00');
+    d.setMonth(d.getMonth()+months);
+    return d.toISOString().slice(0,10);
+  }
+  function startOfWeek(dateStr){
+    var d = new Date(dateStr+'T00:00:00');
+    var day = d.getDay(); // 0=Sun..6=Sat
+    var diff = (day===0 ? -6 : 1-day); // Monday-based week
+    d.setDate(d.getDate()+diff);
+    return d.toISOString().slice(0,10);
+  }
+  function weekRange(anchorDate){
+    var start = startOfWeek(anchorDate || todayStr());
+    var end = addDays(start,6);
+    return {start:start, end:end};
+  }
+
+  // ---- Rate-tier pay calculation (weekday base / weekday evening / late night / sábado / domingo / festivo) ----
+  function timeToDec(hhmm){
+    if(!hhmm) return null;
+    var parts = hhmm.split(':');
+    return parseInt(parts[0],10) + (parseInt(parts[1],10)||0)/60;
+  }
+  function shiftHours(shift){
+    if(shift.startTime && shift.endTime){
+      var s = timeToDec(shift.startTime), e = timeToDec(shift.endTime);
+      if(e<=s) e += 24;
+      return e - s;
+    }
+    return shift.hours || 0;
+  }
+  // Splits a weekday shift's hours across base / evening / late-night tiers, mirroring real payslips
+  function computeShiftGross(job, dateStr, shift){
+    var rates = job.rates || {};
+    if(shift.isHoliday) return shiftHours(shift) * (rates.publicHoliday||0);
+    var dow = new Date(dateStr+'T00:00:00').getDay(); // 0=Sun..6=Sat
+    if(!shift.startTime || !shift.endTime){
+      // legacy shift without clock times: use flat rate for that day-type
+      var flatRate = dow===6 ? rates.saturday : dow===0 ? rates.sunday : rates.weekday;
+      return shiftHours(shift) * (flatRate||0);
+    }
+    var s = timeToDec(shift.startTime), e = timeToDec(shift.endTime);
+    if(e<=s) e += 24;
+    if(dow===6) return (e-s) * (rates.saturday||0);
+    if(dow===0) return (e-s) * (rates.sunday||0);
+    var thr = (rates.eveningThresholdHour!=null ? rates.eveningThresholdHour : 19);
+    var preEvening = Math.max(0, Math.min(e,thr) - s);
+    var evening = Math.max(0, Math.min(e,24) - Math.max(s,thr));
+    var lateNight = Math.max(0, e - Math.max(s,24));
+    return preEvening*(rates.weekday||0) + evening*(rates.weekdayEvening||0) + lateNight*(rates.lateNight||0);
+  }
+
+  // Real payslips pay per weekly period (Mon-Sun), not per individual shift — all shifts in the
+  // same pay week land on the SAME payday, N days after that week's Sunday.
+  function periodEndFor(dateStr){
+    var d = new Date(dateStr+'T00:00:00');
+    var toSunday = (7 - d.getDay()) % 7; // 0 if dateStr is already a Sunday
+    d.setDate(d.getDate()+toSunday);
+    return d.toISOString().slice(0,10);
+  }
+
+  // Expected net pay + expected pay date for a logged shift, based on its job's rate schedule/tax/pay cycle
+  function shiftPay(shift){
+    var job = jobById(shift.jobId);
+    if(!job) return {gross:0, net:0, currency:S.baseCurrency, payDate:shift.date};
+    var gross = computeShiftGross(job, shift.date, shift);
+    var net = gross * (1 - (job.taxRate||0));
+    var payDate = addDays(periodEndFor(shift.date), job.payDelayDays!=null ? job.payDelayDays : 7);
+    return {gross:gross, net:net, currency:job.currency, payDate: payDate};
+  }
+
+  // Expand pending items (including recurring ones) into concrete dated occurrences up to windowEnd
+  function occFromPending(p, date){
+    return {id:p.id+'@'+date, sourceId:p.id, concept:p.concept, kind:p.kind, amount:p.amount, currency:p.currency, accountId:p.accountId, dueDate:date, recurrence:p.recurrence};
+  }
+  function expandPendingOccurrences(windowEnd){
+    var out = [];
+    S.pending.filter(function(p){return p.status==='open';}).forEach(function(p){
+      if(!p.recurrence || p.recurrence==='none'){
+        if(p.dueDate<=windowEnd) out.push(occFromPending(p,p.dueDate));
+        return;
+      }
+      var d = p.dueDate, guard=0;
+      while(d<=windowEnd && guard<520){
+        out.push(occFromPending(p,d));
+        d = p.recurrence==='weekly' ? addDays(d,7) : addMonths(d,1);
+        guard++;
+      }
+    });
+    return out;
+  }
 
   function convert(amount, from, to){
     if(from === to) return amount;
@@ -169,6 +372,7 @@ html,body{margin:0;padding:0;background:#FBF9F4}
     var html = '';
     html += renderHeader();
     if(activeTab==='dashboard') html += renderDashboard();
+    else if(activeTab==='turnos') html += renderTurnos();
     else if(activeTab==='pendientes') html += renderPendientes();
     else if(activeTab==='proyeccion') html += renderProyeccion();
     else if(activeTab==='movimientos') html += renderMovimientos();
@@ -180,7 +384,7 @@ html,body{margin:0;padding:0;background:#FBF9F4}
   }
 
   function renderHeader(){
-    var tabs = [['dashboard','Panel'],['pendientes','Pendientes'],['proyeccion','Proyección'],['movimientos','Movimientos'],['metas','Metas'],['cuentas','Cuentas']];
+    var tabs = [['dashboard','Panel'],['turnos','Turnos'],['pendientes','Pendientes'],['proyeccion','Proyección'],['movimientos','Movimientos'],['metas','Metas'],['cuentas','Cuentas']];
     var tabHtml = tabs.map(function(t){
       var active = activeTab===t[0];
       return '<button data-tab="'+t[0]+'" style="padding:10px 4px;margin-right:22px;background:none;border:none;cursor:pointer;font-size:13px;font-weight:600;color:'+(active?'#14213D':'#A39C8C')+';border-bottom:2px solid '+(active?'#0F6E66':'transparent')+'">'+t[1]+'</button>';
@@ -206,6 +410,63 @@ html,body{margin:0;padding:0;background:#FBF9F4}
   // ---------- DASHBOARD ----------
   function monthTx(){
     return S.transactions.filter(function(t){ return t.date.slice(0,7)===dashMonth; });
+  }
+
+  // ---------- ESTA SEMANA (turnos + pendientes que caen en la semana actual) ----------
+  function thisWeekItems(){
+    var wk = weekRange();
+    var items = [];
+
+    S.shifts.filter(function(s){ return !s.paid; }).forEach(function(s){
+      var pay = shiftPay(s);
+      if(pay.payDate >= wk.start && pay.payDate <= wk.end){
+        var job = jobById(s.jobId);
+        items.push({
+          label: (job?job.name:'Turno')+' · '+s.date+(s.note?' · '+s.note:''),
+          date: pay.payDate, kind:'in',
+          amount: convert(pay.net, pay.currency, S.baseCurrency)
+        });
+      }
+    });
+
+    expandPendingOccurrences(wk.end).forEach(function(o){
+      if(o.dueDate >= wk.start && o.dueDate <= wk.end){
+        items.push({
+          label: o.concept + (o.recurrence!=='none' ? ' (recurrente)' : ''),
+          date: o.dueDate, kind:o.kind,
+          amount: convert(o.amount, o.currency, S.baseCurrency)
+        });
+      }
+    });
+
+    items.sort(function(a,b){ return a.date.localeCompare(b.date); });
+    return {range: wk, items: items};
+  }
+
+  function renderThisWeek(){
+    var data = thisWeekItems();
+    var incoming = data.items.filter(function(i){return i.kind==='in';}).reduce(function(s,i){return s+i.amount;},0);
+    var outgoing = data.items.filter(function(i){return i.kind==='out';}).reduce(function(s,i){return s+i.amount;},0);
+
+    var out = '<div class="eyebrow" style="margin-bottom:10px">Esta semana ('+data.range.start+' a '+data.range.end+')</div>';
+    out += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">'+
+      metricCard('Vas a recibir', fmt(incoming, S.baseCurrency), '#0F6E66')+
+      metricCard('Te sale', fmt(outgoing, S.baseCurrency), '#B23A2E')+
+      metricCard('Neto de la semana', fmt(incoming-outgoing, S.baseCurrency), (incoming-outgoing)>=0?'#0F6E66':'#B23A2E')+
+    '</div>';
+
+    if(data.items.length===0){
+      out += emptyState('Nada agendado para esta semana.', 'Registra tus turnos en la pestaña Turnos o agrega un pendiente con fecha esta semana.');
+    } else {
+      out += '<div class="card" style="padding:0;overflow:hidden;margin-bottom:22px">' + data.items.map(function(i){
+        var color = i.kind==='in' ? '#0F6E66' : '#B23A2E';
+        return '<div style="display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #F0ECE0;font-size:13px">'+
+          '<span>'+i.date+' · '+esc(i.label)+'</span>'+
+          '<span class="mono" style="color:'+color+'">'+(i.kind==='in'?'+':'-')+fmt(i.amount, S.baseCurrency)+'</span>'+
+        '</div>';
+      }).join('') + '</div>';
+    }
+    return out;
   }
 
   function renderDashboard(){
@@ -242,6 +503,9 @@ html,body{margin:0;padding:0;background:#FBF9F4}
       '<input type="month" value="'+dashMonth+'" id="dashMonthInput" style="width:auto"/>'+
       '</div>';
 
+    out += renderThisWeek();
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Resumen del mes</div>';
     out += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">'+
       metricCard('Ingresos', fmt(income, S.baseCurrency), '#0F6E66')+
       metricCard('Egresos', fmt(expense, S.baseCurrency), '#B23A2E')+
@@ -284,6 +548,113 @@ html,body{margin:0;padding:0;background:#FBF9F4}
     '</div>';
   }
 
+  // ---------- TURNOS ----------
+  function renderTurnos(){
+    var out = '';
+    if(S.jobs.length===0){
+      out += emptyState('No tienes trabajos configurados.', 'Agrega uno en Cuentas → Trabajos (nombre, tarifa/hora, % impuesto, días de retraso) antes de registrar turnos.');
+      return wrapClose(out);
+    }
+
+    out += '<div class="card" style="margin-bottom:20px">'+
+      '<div class="eyebrow" style="margin-bottom:12px">Registrar turno</div>'+
+      '<form id="shiftForm">'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px">'+
+          '<div><label>Trabajo</label><select name="jobId">'+S.jobs.map(function(j){return '<option value="'+j.id+'">'+esc(j.name)+'</option>';}).join('')+'</select></div>'+
+          '<div><label>Fecha del turno</label><input type="date" name="date" value="'+todayStr()+'" required/></div>'+
+          '<div><label>Hora inicio (pagada)</label><input type="time" name="startTime" required/></div>'+
+          '<div><label>Hora fin</label><input type="time" name="endTime" required/></div>'+
+          '<div><label>Nota (opcional)</label><input type="text" name="note" placeholder="Ej. Machine Hall"/></div>'+
+        '</div>'+
+        '<label style="display:flex;align-items:center;gap:6px;margin-bottom:10px;text-transform:none;font-size:13px;color:#14213D">'+
+          '<input type="checkbox" name="isHoliday" style="width:auto"/> Es día festivo (public holiday)'+
+        '</label>'+
+        '<button type="submit" class="btn">Registrar turno</button>'+
+      '</form>'+
+    '</div>';
+
+    var shifts = S.shifts.slice();
+    var pendingCount = shifts.filter(function(s){return !s.paid;}).length;
+
+    out += '<div class="eyebrow" style="margin-bottom:10px">Turnos registrados ('+pendingCount+' por cobrar)</div>';
+    if(shifts.length===0){
+      out += emptyState('Sin turnos registrados todavía.', 'Regístralos aquí conforme trabajes para que el Panel sepa cuánto vas a recibir cada semana.');
+      return wrapClose(out);
+    }
+
+    // ---- Resumen: cuánto vas a recibir ESTA semana, por fecha de pago (no fecha de turno) ----
+    var wk = weekRange();
+    var dueThisWeek = shifts.filter(function(s){
+      if(s.paid) return false;
+      var pay = shiftPay(s);
+      return pay.payDate >= wk.start && pay.payDate <= wk.end;
+    });
+    var totalThisWeek = dueThisWeek.reduce(function(sum,s){
+      var pay = shiftPay(s);
+      return sum + convert(pay.net, pay.currency, S.baseCurrency);
+    }, 0);
+    var byJobThisWeek = {};
+    dueThisWeek.forEach(function(s){
+      var job = jobById(s.jobId);
+      var pay = shiftPay(s);
+      var v = convert(pay.net, pay.currency, S.baseCurrency);
+      byJobThisWeek[job?job.name:'—'] = (byJobThisWeek[job?job.name:'—']||0) + v;
+    });
+
+    out += '<div class="card" style="margin-bottom:20px;border-color:#0F6E66">'+
+      '<div class="eyebrow" style="margin-bottom:8px">Esta semana ('+wk.start+' a '+wk.end+') vas a recibir</div>'+
+      '<div class="mono" style="font-size:26px;font-weight:700;color:#0F6E66;margin-bottom:6px">'+fmt(totalThisWeek, S.baseCurrency)+'</div>'+
+      (Object.keys(byJobThisWeek).length ?
+        '<div style="font-size:12px;color:#8A8272">'+Object.keys(byJobThisWeek).map(function(name){ return esc(name)+': '+fmt(byJobThisWeek[name], S.baseCurrency); }).join(' · ')+'</div>'
+        : '<div style="font-size:12px;color:#8A8272">Nada programado para caer esta semana según las fechas de pago.</div>')+
+    '</div>';
+
+    // ---- Una tabla por trabajo, ordenada por fecha de PAGO (no fecha de turno) ----
+    out += S.jobs.map(function(job){
+      var jobShifts = shifts.filter(function(s){ return s.jobId===job.id; })
+        .map(function(s){ return {s:s, pay:shiftPay(s)}; })
+        .sort(function(a,b){ return b.pay.payDate.localeCompare(a.pay.payDate); });
+
+      if(jobShifts.length===0) return '';
+
+      var pendingNet = 0, paidNet = 0;
+      jobShifts.forEach(function(x){
+        var v = convert(x.pay.net, x.pay.currency, S.baseCurrency);
+        if(x.s.paid) paidNet += v; else pendingNet += v;
+      });
+
+      var rows = jobShifts.map(function(x){
+        var s = x.s, pay = x.pay;
+        var timeLabel = (s.startTime&&s.endTime) ? (s.startTime+'–'+s.endTime) : '';
+        var inThisWeek = !s.paid && pay.payDate>=wk.start && pay.payDate<=wk.end;
+        return '<div style="padding:12px 16px;border-bottom:1px solid #F0ECE0;'+(s.paid?'opacity:.5':'')+(inThisWeek?'background:#F3F9F7':'')+'">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'+
+            '<div>'+
+              '<div style="font-size:13px;font-weight:600">Trabajaste el '+s.date+(timeLabel?' ('+timeLabel+')':'')+(s.isHoliday?' · festivo':'')+'</div>'+
+              '<div style="font-size:13px;font-weight:700;color:'+(s.paid?'#8A8272':'#0F6E66')+';margin-top:2px">→ '+(s.paid?'Cobraste el ':'Cobras el ~')+pay.payDate+'</div>'+
+              (s.note ? '<div style="font-size:11px;color:#8A8272;margin-top:2px">'+esc(s.note)+'</div>' : '')+
+            '</div>'+
+            '<div style="display:flex;align-items:center;gap:10px">'+
+              '<div class="mono" style="font-weight:700;color:#0F6E66">'+fmt(convert(pay.net,pay.currency,S.baseCurrency), S.baseCurrency)+'</div>'+
+              (s.paid ? '' : '<button class="btn-ghost" data-paid-shift="'+s.id+'">Ya cobré</button>')+
+              '<button class="btn-danger" data-del-shift="'+s.id+'">Eliminar</button>'+
+            '</div>'+
+          '</div>'+
+          '<div class="mono" style="font-size:11px;color:#8A8272;margin-top:4px">'+fmt(pay.gross, pay.currency)+' bruto / '+fmt(pay.net, pay.currency)+' neto est.</div>'+
+        '</div>';
+      }).join('');
+
+      return '<div class="eyebrow" style="margin:18px 0 8px">'+esc(job.name)+
+        ' <span style="font-weight:400;text-transform:none;letter-spacing:0">— '+
+          (pendingNet>0 ? fmt(pendingNet,S.baseCurrency)+' por cobrar' : 'todo cobrado')+
+          (paidNet>0 ? ' · '+fmt(paidNet,S.baseCurrency)+' ya cobrado' : '')+
+        '</span></div>'+
+        '<div class="card" style="padding:0;overflow:hidden;margin-bottom:10px">'+rows+'</div>';
+    }).join('');
+
+    return wrapClose(out);
+  }
+
   // ---------- PENDIENTES ----------
   function renderPendientes(){
     var out = '<div class="card" style="margin-bottom:20px">'+
@@ -296,6 +667,11 @@ html,body{margin:0;padding:0;background:#FBF9F4}
           '<div><label>Moneda</label><select name="currency">'+CURRENCIES.map(function(c){return '<option'+(c===S.baseCurrency?' selected':'')+'>'+c+'</option>';}).join('')+'</select></div>'+
           '<div><label>Cuenta</label><select name="accountId">'+S.accounts.map(function(a){return '<option value="'+a.id+'">'+esc(a.name)+'</option>';}).join('')+'</select></div>'+
           '<div><label>Fecha esperada</label><input type="date" name="dueDate" required/></div>'+
+          '<div><label>Se repite</label><select name="recurrence">'+
+            '<option value="none">No se repite</option>'+
+            '<option value="weekly">Cada semana</option>'+
+            '<option value="monthly">Cada mes</option>'+
+          '</select></div>'+
         '</div>'+
         '<button type="submit" class="btn">Agregar pendiente</button>'+
       '</form>'+
@@ -339,9 +715,10 @@ html,body{margin:0;padding:0;background:#FBF9F4}
       var acc = accountById(p.accountId);
       var days = Math.ceil((new Date(p.dueDate) - new Date())/86400000);
       var daysLabel = isResolved ? 'resuelto' : (days<0 ? 'atrasado '+Math.abs(days)+' días' : (days===0?'hoy':'en '+days+' días'));
+      var recLabel = (p.recurrence && p.recurrence!=='none') ? (' · repite '+(p.recurrence==='weekly'?'cada semana':'cada mes')) : '';
       return '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #F0ECE0">'+
         '<div>'+
-          '<div style="font-size:13px;font-weight:600">'+esc(p.concept)+'</div>'+
+          '<div style="font-size:13px;font-weight:600">'+esc(p.concept)+recLabel+'</div>'+
           '<div class="mono" style="font-size:11px;color:#8A8272">'+p.dueDate+' · '+(acc?esc(acc.name):'—')+' · '+daysLabel+'</div>'+
         '</div>'+
         '<div style="display:flex;align-items:center;gap:10px">'+
@@ -372,11 +749,18 @@ html,body{margin:0;padding:0;background:#FBF9F4}
       liquidTotal += convert(bal, a.currency, S.baseCurrency);
     });
     events.push({date: todayStr(), label:'Saldo líquido hoy', amount: liquidTotal});
-    S.pending.filter(function(p){ return p.status==='open' && p.dueDate <= targetDate; })
-      .forEach(function(p){
-        var v = convert(p.amount, p.currency, S.baseCurrency);
-        events.push({date: p.dueDate, label: p.concept, amount: p.kind==='in' ? v : -v});
-      });
+    expandPendingOccurrences(targetDate).forEach(function(o){
+      var v = convert(o.amount, o.currency, S.baseCurrency);
+      events.push({date: o.dueDate, label: o.concept+(o.recurrence!=='none'?' (recurrente)':''), amount: o.kind==='in' ? v : -v});
+    });
+    S.shifts.filter(function(s){ return !s.paid; }).forEach(function(s){
+      var pay = shiftPay(s);
+      if(pay.payDate <= targetDate){
+        var job = jobById(s.jobId);
+        var v = convert(pay.net, pay.currency, S.baseCurrency);
+        events.push({date: pay.payDate, label: (job?job.name:'Turno')+' · '+s.date, amount: v});
+      }
+    });
     events.sort(function(a,b){ return a.date.localeCompare(b.date); });
     var running = 0;
     var points = events.map(function(e){ running += e.amount; return {date:e.date, label:e.label, delta:e.amount, balance:running}; });
@@ -409,16 +793,18 @@ html,body{margin:0;padding:0;background:#FBF9F4}
         out += emptyState('No tienes trabajos configurados.', 'Agrega uno en Cuentas → Trabajos, con su tarifa por hora.');
       } else {
         out += '<div class="card">' + S.jobs.map(function(j){
-          var netRateOwn = j.hourlyRate * (1 - j.taxRate);
+          var netRateOwn = (j.rates?j.rates.weekday:0) * (1 - j.taxRate);
           var netRateBase = convert(netRateOwn, j.currency, S.baseCurrency);
           var hours = gap / netRateBase;
-          var lastDate = new Date(proyTargetDate); lastDate.setDate(lastDate.getDate() - (j.payLagDays||0));
-          var lastDateStr = lastDate.toISOString().slice(0,10);
+          var delay = j.payDelayDays!=null ? j.payDelayDays : 7;
+          var cutoff = addDays(proyTargetDate, -delay);
+          var cutoffDow = new Date(cutoff+'T00:00:00').getDay();
+          var lastDateStr = addDays(cutoff, -cutoffDow); // latest Sunday (pay-period end) on/before cutoff
           var tooLate = lastDateStr < todayStr();
           return '<div style="padding:10px 0;border-bottom:1px solid #F0ECE0">'+
             '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600"><span>'+esc(j.name)+'</span><span class="mono">~'+hours.toFixed(1)+' h</span></div>'+
-            '<div style="font-size:12px;color:#8A8272;margin-top:2px">'+fmt(netRateOwn, j.currency)+'/h neto est. · '+
-              (tooLate ? '<span style="color:#B23A2E">el turno ya tendría que haber sido antes de hoy para pagarte a tiempo (retraso de pago ~'+j.payLagDays+'d)</span>' : 'trabájalo antes del '+lastDateStr+' para que alcance a pagarte (retraso ~'+j.payLagDays+'d)')+
+            '<div style="font-size:12px;color:#8A8272;margin-top:2px">'+fmt(netRateOwn, j.currency)+'/h neto est. (tarifa entre semana; menos horas si consigues turnos de sábado/domingo) · '+
+              (tooLate ? '<span style="color:#B23A2E">ya no hay semana de pago que alcance a llegar antes del '+proyTargetDate+' (pagan ~'+delay+'d después del domingo de cada semana)</span>' : 'trabájalo en la semana que termina el '+lastDateStr+' o antes, para que ese pago llegue a tiempo')+
             '</div>'+
           '</div>';
         }).join('') + '</div>';
@@ -648,20 +1034,31 @@ html,body{margin:0;padding:0;background:#FBF9F4}
     }).join('');
     out += '</div>';
 
-    out += '<div class="eyebrow" style="margin-bottom:10px">Trabajos (para el calculador de horas en Proyección)</div>';
+    out += '<div class="eyebrow" style="margin-bottom:10px">Trabajos y tarifas por tramo</div>';
     out += '<div class="card" style="margin-bottom:22px">';
     if(S.jobs.length===0){ out += '<div style="font-size:13px;color:#8A8272;margin-bottom:10px">Sin trabajos configurados.</div>'; }
     out += S.jobs.map(function(j){
-      return '<div style="display:grid;grid-template-columns:1.2fr .8fr .7fr .7fr .7fr 30px;gap:8px;align-items:center;margin-bottom:10px">'+
-        '<input type="text" data-job-name="'+j.id+'" value="'+esc(j.name)+'" placeholder="Nombre"/>'+
-        '<input type="number" step="0.01" data-job-rate="'+j.id+'" value="'+j.hourlyRate+'" placeholder="$/hr"/>'+
-        '<select data-job-cur="'+j.id+'">'+CURRENCIES.map(function(c){return '<option'+(c===j.currency?' selected':'')+'>'+c+'</option>';}).join('')+'</select>'+
-        '<input type="number" step="0.01" min="0" max="1" data-job-tax="'+j.id+'" value="'+j.taxRate+'" placeholder="% tax"/>'+
-        '<input type="number" step="1" min="0" data-job-lag="'+j.id+'" value="'+j.payLagDays+'" placeholder="días retraso"/>'+
-        '<button class="btn-danger" data-del-job="'+j.id+'" style="padding:6px">×</button>'+
+      var r = j.rates || {};
+      return '<div style="border-bottom:1px solid #F0ECE0;padding-bottom:14px;margin-bottom:14px">'+
+        '<div style="display:grid;grid-template-columns:1.3fr .8fr .6fr .6fr 30px;gap:8px;align-items:center;margin-bottom:8px">'+
+          '<input type="text" data-job-name="'+j.id+'" value="'+esc(j.name)+'" placeholder="Nombre"/>'+
+          '<select data-job-cur="'+j.id+'">'+CURRENCIES.map(function(c){return '<option'+(c===j.currency?' selected':'')+'>'+c+'</option>';}).join('')+'</select>'+
+          '<input type="number" step="0.01" min="0" max="1" data-job-tax="'+j.id+'" value="'+j.taxRate+'" placeholder="% tax"/>'+
+          '<input type="number" step="1" min="0" data-job-lag="'+j.id+'" value="'+j.payDelayDays+'" placeholder="días desde domingo"/>'+
+          '<button class="btn-danger" data-del-job="'+j.id+'" style="padding:6px">×</button>'+
+        '</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px">'+
+          '<div><label>Entre semana</label><input type="number" step="0.01" data-job-r-weekday="'+j.id+'" value="'+r.weekday+'"/></div>'+
+          '<div><label>Desde qué hora sube</label><input type="number" step="1" min="0" max="23" data-job-r-thr="'+j.id+'" value="'+r.eveningThresholdHour+'" placeholder="Ej. 19"/></div>'+
+          '<div><label>Entre semana noche</label><input type="number" step="0.01" data-job-r-evening="'+j.id+'" value="'+r.weekdayEvening+'"/></div>'+
+          '<div><label>Después de medianoche</label><input type="number" step="0.01" data-job-r-late="'+j.id+'" value="'+r.lateNight+'"/></div>'+
+          '<div><label>Sábado</label><input type="number" step="0.01" data-job-r-sat="'+j.id+'" value="'+r.saturday+'"/></div>'+
+          '<div><label>Domingo</label><input type="number" step="0.01" data-job-r-sun="'+j.id+'" value="'+r.sunday+'"/></div>'+
+          '<div><label>Día festivo</label><input type="number" step="0.01" data-job-r-ph="'+j.id+'" value="'+r.publicHoliday+'"/></div>'+
+        '</div>'+
       '</div>';
     }).join('');
-    out += '<div style="font-size:11px;color:#8A8272;margin-bottom:10px">Orden: nombre, tarifa/hora, moneda, % de impuesto (0.16 = 16%), días de retraso entre el turno y que te paguen.</div>';
+    out += '<div style="font-size:11px;color:#8A8272;margin-bottom:10px">"Desde qué hora sube" es la hora (0-23) a partir de la cual un turno entre semana pasa a la tarifa de noche — ej. 19 para B&amp;W (7pm), 22 para Betty\'s (10pm). % de impuesto: 0.16 = 16%. "Días desde domingo": cuántos días después del domingo que cierra tu semana de trabajo (Lun-Dom) te pagan — ej. 4 para Betty\'s (pagan jueves), 10 para B&amp;W (pagan miércoles de la otra semana). Todos los turnos de esa semana caen en el mismo pago.</div>';
     out += '<button class="btn-ghost" id="addJob">+ Agregar trabajo</button>';
     out += '</div>';
 
@@ -733,6 +1130,50 @@ html,body{margin:0;padding:0;background:#FBF9F4}
       });
     }
 
+    var shiftForm = document.getElementById('shiftForm');
+    if(shiftForm){
+      shiftForm.addEventListener('submit', function(e){
+        e.preventDefault();
+        var f = new FormData(shiftForm);
+        var startTime = f.get('startTime'), endTime = f.get('endTime');
+        if(!startTime || !endTime){ alert('Faltan horas.'); return; }
+        S.shifts.push({
+          id: uid(), jobId: f.get('jobId'), date: f.get('date'),
+          startTime: startTime, endTime: endTime,
+          isHoliday: f.get('isHoliday')==='on',
+          note: f.get('note')||'', paid:false
+        });
+        save(); render();
+      });
+    }
+
+    document.querySelectorAll('[data-paid-shift]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var s = shiftById(el.getAttribute('data-paid-shift'));
+        if(!s) return;
+        var job = jobById(s.jobId);
+        var pay = shiftPay(s);
+        if(job){
+          var acc = S.accounts.find(function(a){return a.currency===job.currency;}) || S.accounts[0];
+          S.transactions.push({
+            id: uid(), date: todayStr(), accountId: acc.id, type:'income',
+            category: 'Sueldo/Shifts', amount: convert(pay.net, pay.currency, acc.currency),
+            currency: acc.currency, note: job.name+' · '+s.date, goalId: null
+          });
+        }
+        s.paid = true;
+        save(); render();
+      });
+    });
+
+    document.querySelectorAll('[data-del-shift]').forEach(function(el){
+      el.addEventListener('click', function(){
+        var id = el.getAttribute('data-del-shift');
+        S.shifts = S.shifts.filter(function(s){return s.id!==id;});
+        save(); render();
+      });
+    });
+
     var pendForm = document.getElementById('pendForm');
     if(pendForm){
       pendForm.addEventListener('submit', function(e){
@@ -741,7 +1182,8 @@ html,body{margin:0;padding:0;background:#FBF9F4}
         S.pending.push({
           id: uid(), kind: f.get('kind'), concept: f.get('concept'),
           amount: parseFloat(f.get('amount')), currency: f.get('currency'),
-          accountId: f.get('accountId'), dueDate: f.get('dueDate'), status: 'open'
+          accountId: f.get('accountId'), dueDate: f.get('dueDate'), status: 'open',
+          recurrence: f.get('recurrence')||'none'
         });
         save(); render();
       });
@@ -760,7 +1202,11 @@ html,body{margin:0;padding:0;background:#FBF9F4}
           amount: convert(p.amount, p.currency, acc.currency), currency: acc.currency,
           note: p.concept, goalId: null
         });
-        p.status = 'resolved';
+        if(p.recurrence && p.recurrence!=='none'){
+          p.dueDate = p.recurrence==='weekly' ? addDays(p.dueDate,7) : addMonths(p.dueDate,1);
+        } else {
+          p.status = 'resolved';
+        }
         save(); render();
       });
     });
@@ -899,8 +1345,26 @@ html,body{margin:0;padding:0;background:#FBF9F4}
     document.querySelectorAll('[data-job-name]').forEach(function(el){
       el.addEventListener('change', function(){ jobById(el.getAttribute('data-job-name')).name = el.value; save(); });
     });
-    document.querySelectorAll('[data-job-rate]').forEach(function(el){
-      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-rate')).hourlyRate = v; save(); } });
+    document.querySelectorAll('[data-job-r-weekday]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-weekday')).rates.weekday = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-r-thr]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseInt(el.value,10); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-thr')).rates.eveningThresholdHour = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-r-evening]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-evening')).rates.weekdayEvening = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-r-late]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-late')).rates.lateNight = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-r-sat]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-sat')).rates.saturday = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-r-sun]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-sun')).rates.sunday = v; save(); } });
+    });
+    document.querySelectorAll('[data-job-r-ph]').forEach(function(el){
+      el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-r-ph')).rates.publicHoliday = v; save(); } });
     });
     document.querySelectorAll('[data-job-cur]').forEach(function(el){
       el.addEventListener('change', function(){ jobById(el.getAttribute('data-job-cur')).currency = el.value; save(); });
@@ -909,7 +1373,7 @@ html,body{margin:0;padding:0;background:#FBF9F4}
       el.addEventListener('change', function(){ var v=parseFloat(el.value); if(!isNaN(v)) { jobById(el.getAttribute('data-job-tax')).taxRate = v; save(); } });
     });
     document.querySelectorAll('[data-job-lag]').forEach(function(el){
-      el.addEventListener('change', function(){ var v=parseInt(el.value,10); if(!isNaN(v)) { jobById(el.getAttribute('data-job-lag')).payLagDays = v; save(); } });
+      el.addEventListener('change', function(){ var v=parseInt(el.value,10); if(!isNaN(v)) { jobById(el.getAttribute('data-job-lag')).payDelayDays = v; save(); } });
     });
     document.querySelectorAll('[data-del-job]').forEach(function(el){
       el.addEventListener('click', function(){
@@ -919,7 +1383,7 @@ html,body{margin:0;padding:0;background:#FBF9F4}
     });
     var addJobBtn = document.getElementById('addJob');
     if(addJobBtn) addJobBtn.addEventListener('click', function(){
-      S.jobs.push({id:uid(), name:'Nuevo trabajo', hourlyRate:0, currency:S.baseCurrency, taxRate:0.15, payLagDays:7, tag:TAGS[S.jobs.length % TAGS.length]});
+      S.jobs.push({id:uid(), name:'Nuevo trabajo', currency:S.baseCurrency, taxRate:0.15, payDelayDays:7, tag:TAGS[S.jobs.length % TAGS.length], rates:{weekday:0, eveningThresholdHour:19, weekdayEvening:0, lateNight:0, saturday:0, sunday:0, publicHoliday:0}});
       save(); render();
     });
 
@@ -960,7 +1424,13 @@ html,body{margin:0;padding:0;background:#FBF9F4}
 <script>
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function(){
-    navigator.serviceWorker.register("sw.js").catch(function(e){ console.warn("SW register failed", e); });
+    // Probe first so environments that don't actually serve sw.js (e.g. preview sandboxes)
+    // don't throw a noisy 404 registration error — real deployments (GitHub Pages, etc.) register normally.
+    fetch("sw.js", {method:"HEAD"}).then(function(res){
+      if(res && res.ok){
+        navigator.serviceWorker.register("sw.js").catch(function(){ /* non-critical: app works fine without offline caching */ });
+      }
+    }).catch(function(){ /* sw.js not reachable here, skip silently */ });
   });
 }
 </script>
