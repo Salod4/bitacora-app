@@ -1,4 +1,4 @@
-const CACHE_NAME = 'bitacora-v1';
+const CACHE_NAME = 'bitacora-v2';
 const SHELL_ASSETS = [
   './',
   './index.html',
@@ -24,14 +24,32 @@ self.addEventListener('activate', function(event){
 });
 
 self.addEventListener('fetch', function(event){
-  // Network-first for the Chart.js CDN script so it stays current when online;
-  // cache-first for everything else so the app shell works offline.
-  if (event.request.url.indexOf('cdnjs.cloudflare.com') !== -1) {
+  var url = event.request.url;
+
+  // Network-first for the Chart.js CDN script so it stays current when online.
+  if (url.indexOf('cdnjs.cloudflare.com') !== -1) {
     event.respondWith(
       fetch(event.request).catch(function(){ return caches.match(event.request); })
     );
     return;
   }
+
+  // Network-first for the HTML shell (navigations + index.html) so a code update
+  // shows up on the very next reload instead of getting stuck behind an old cache
+  // until sw.js itself happens to change. Falls back to cache only when offline.
+  var isHtmlShell = event.request.mode === 'navigate' || url.indexOf('index.html') !== -1 || url.endsWith('/');
+  if (isHtmlShell) {
+    event.respondWith(
+      fetch(event.request).then(function(res){
+        var copy = res.clone();
+        caches.open(CACHE_NAME).then(function(cache){ cache.put(event.request, copy); });
+        return res;
+      }).catch(function(){ return caches.match(event.request); })
+    );
+    return;
+  }
+
+  // Cache-first for static assets (icons, manifest) so the shell still works offline.
   event.respondWith(
     caches.match(event.request).then(function(cached){
       return cached || fetch(event.request).catch(function(){ return cached; });
